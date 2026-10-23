@@ -4,6 +4,7 @@ services:
     image: redis:7-alpine
     container_name: target-redis
     network_mode: host
+    command: ["redis-server", "--loglevel", "warning"]
     restart: unless-stopped
 
   # 2. Observed Microservice Container
@@ -15,6 +16,8 @@ services:
       - TARGET_HOST=127.0.0.1
       - TARGET_PORT=6379
     network_mode: host
+    volumes:
+      - ./victim_app/app.py:/app/app.py:ro
     depends_on:
       - redis
     restart: unless-stopped

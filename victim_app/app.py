@@ -27,22 +27,31 @@ def attempt_connect():
 def main():
     print(f"[*] orders-service running (PID: {os.getpid()}). Connecting to {TARGET_HOST}:{TARGET_PORT}...")
     fail_count = 0
+    success_count = 0
     
     while True:
         success = attempt_connect()
         if success:
             if fail_count > 0:
-                print(f"[RECOVERED] Successfully reconnected to database ({TARGET_HOST}:{TARGET_PORT})")
+                print(f"[✓ RECOVERED] Successfully reconnected to database ({TARGET_HOST}:{TARGET_PORT})")
                 fail_count = 0
+                success_count = 0
             else:
-                print(f"[HEALTHY] Connected to backend database ({TARGET_HOST}:{TARGET_PORT})")
+                success_count += 1
+                if success_count == 1:
+                    print(f"[✓ HEALTHY] Connected to database ({TARGET_HOST}:{TARGET_PORT}) - Service operational")
+                elif success_count % 30 == 0:
+                    print(f"[✓ HEALTHY] Heartbeat: Database ({TARGET_HOST}:{TARGET_PORT}) responding normally")
             time.sleep(1.0)
         else:
             fail_count += 1
+            success_count = 0
             # Maintain aggressive reconnect storm (20 connects/sec) for eBPF sensing,
             # but throttle console output so logs remain clear and readable
-            if fail_count == 1 or fail_count % 20 == 0:
-                print(f"[RETRY STORM] Database unreachable ({TARGET_HOST}:{TARGET_PORT})! Retrying every 50ms (Attempts: {fail_count})...")
+            if fail_count == 1:
+                print(f"[⚠️ RETRY STORM] Database unreachable ({TARGET_HOST}:{TARGET_PORT})! Retrying every 50ms...")
+            elif fail_count % 40 == 0:
+                print(f"[⚠️ RETRY STORM] Reconnecting to {TARGET_HOST}:{TARGET_PORT}... ({fail_count} attempts failed)")
             time.sleep(0.05)
 
 if __name__ == "__main__":
