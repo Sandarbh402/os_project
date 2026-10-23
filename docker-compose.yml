@@ -1,0 +1,55 @@
+services:
+  # 1. Dependency Service
+  redis:
+    image: redis:7-alpine
+    container_name: target-redis
+    network_mode: host
+    restart: unless-stopped
+
+  # 2. Observed Microservice Container
+  orders-service:
+    image: osproject-orders-service:latest
+    build: ./victim_app
+    container_name: orders-service
+    environment:
+      - TARGET_HOST=127.0.0.1
+      - TARGET_PORT=6379
+    network_mode: host
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  # 3. Privileged eBPF Remediation Host Daemon (Live Triage Mode)
+  ebpf-agent:
+    image: osproject-ebpf-agent:latest
+    build: .
+    container_name: ebpf-agent
+    privileged: true
+    pid: host
+    network_mode: host
+    volumes:
+      - .:/app:rw
+      - /proc:/host/proc:ro
+      - /sys:/sys:rw
+      - /lib/modules:/lib/modules:ro
+      - /usr/src:/usr/src:ro
+      - /var/run/docker.sock:/var/run/docker.sock:rw
+    command: ["python3", "-u", "controller.py"]
+    depends_on:
+      - orders-service
+    restart: unless-stopped
+
+  # 4. Multi-Tier Demonstration Mode in Docker
+  demo-agent:
+    image: osproject-ebpf-agent:latest
+    container_name: ebpf-demo-agent
+    privileged: true
+    pid: host
+    network_mode: host
+    volumes:
+      - .:/app:rw
+      - /proc:/host/proc:ro
+      - /sys:/sys:rw
+      - /var/run/docker.sock:/var/run/docker.sock:rw
+    command: ["python3", "-u", "controller.py", "--demo"]
+    profiles: ["demo"]
