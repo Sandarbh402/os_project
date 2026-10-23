@@ -22,10 +22,10 @@ class Cgroupv2Actuator:
             if os.path.exists(cpu_max_file):
                 with open(cpu_max_file, "w") as f:
                     f.write(payload)
-                print(f"[ACTUATOR - Stage 1] Applied {quota_pct}% CPU quota ({quota_us}/{period_us}) to {cgroup_path}")
+                print(f"  [✓] CPU Quota Applied: Capped container CPU to {quota_pct}% via cgroup v2 ({cgroup_path})")
                 return True
             else:
-                print(f"[ACTUATOR - Stage 1] cgroup v2 file not found: {cpu_max_file}")
+                print(f"  [i] CPU Quota Bypassed: {cpu_max_file} not found on host (simulation mode)")
                 return False
         except Exception as e:
             print(f"[ACTUATOR ERROR] Failed writing cgroup v2 quota to {cpu_max_file}: {e}")

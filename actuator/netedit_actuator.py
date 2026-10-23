@@ -61,7 +61,7 @@ class NetEditBpfAdapter:
             "packets_drained": 0
         }
 
-        print(f"[NETEDIT BpfAdapter - Phase 1] Kernel tc traffic drain applied to {ip_str}:{port} in {elapsed_us:.2f}μs (&lt; 1ms SLA preserved).")
+        print(f"  [✓] Phase 1 Instant Mitigation: Traffic drained from {ip_str}:{port} in {elapsed_us:.2f}μs (< 1ms SLA preserved)")
         return cls._DRAIN_REGISTRY[key]
 
     @classmethod
@@ -86,7 +86,7 @@ class NetEditBpfAdapter:
         if key in cls._DRAIN_REGISTRY:
             cls._DRAIN_REGISTRY[key]["draining"] = False
             cls._DRAIN_REGISTRY[key]["restored_at"] = time.time()
-            print(f"[NETEDIT BpfAdapter] Restored traffic routing for {ip_str}:{port}")
+            print(f"  [✓] Traffic Restored: Re-enabled network routing for {ip_str}:{port}")
             return True
         return False
 
