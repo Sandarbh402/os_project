@@ -154,7 +154,7 @@ class RootCauseAnalysisEngine:
         if host_cpu_pressure or sibling_stall_count >= 2:
             return {
                 "classification": "HOST_RESIDUAL_CONTENTION",
-                "diagnosis": "Noisy Neighbor: Shared physical host CPU thrashing (Node Overload)",
+                "diagnosis": "Noisy Neighbor / Bare-Metal Host Resource Contention (CARAF Residual Factor)",
                 "recommended_phase1": "DRAIN_TRAFFIC",
                 "recommended_phase2": "EVICT_POD",
                 "confidence": 0.92
@@ -164,7 +164,7 @@ class RootCauseAnalysisEngine:
         if event_type == 3 or stall_ns > 80_000_000: # > 80ms futex block
             return {
                 "classification": "INTERNAL_DEADLOCK",
-                "diagnosis": "Internal Deadlock: Application worker thread blocked on mutex lock",
+                "diagnosis": "Application Futex Lock Contention / Thread Blocked (Beyond Thread States)",
                 "recommended_phase1": "DRAIN_TRAFFIC",
                 "recommended_phase2": "RESTART_CONTAINER",
                 "confidence": 0.95
@@ -174,7 +174,7 @@ class RootCauseAnalysisEngine:
         if event_type == 2 or sk_rmem > 500_000:
             return {
                 "classification": "SOCKET_QUEUE_STARVATION",
-                "diagnosis": "Queue Starvation: Inbound socket receive queue backed up (Slow Consumer)",
+                "diagnosis": "User-space Socket Drain Starvation / Recv Queue Backup (K-Sense)",
                 "recommended_phase1": "DRAIN_TRAFFIC",
                 "recommended_phase2": "RESTART_CONTAINER",
                 "confidence": 0.91
@@ -183,7 +183,7 @@ class RootCauseAnalysisEngine:
         # 4. Connection Retry Storm
         return {
             "classification": "CONNECTION_RETRY_STORM",
-            "diagnosis": "Connection Retry Storm: Downstream dependency unreachable / offline",
+            "diagnosis": "Aggressive Downstream Unreachable Retry Storm",
             "recommended_phase1": "DRAIN_TRAFFIC",
             "recommended_phase2": "THROTTLE_CPU",
             "confidence": 0.88

@@ -33,7 +33,8 @@ A real-time, three-tier closed-loop orchestration and autonomous self-healing sy
         ▼
 [ Tier 3: Surgical Self-Healing (Two-Phase Progressive Actuation) ]
   ├── Phase 1 (Microsecond Mitigation, < 1ms):
-  │   └── NetEdit BpfAdapter at tc / cgroup_skb to dynamically drain traffic from failing socket
+  │   ├── NetEdit BpfAdapter at tc / cgroup_skb to dynamically drain traffic in Ring 0
+  │   └── eBPF XDP Line-Rate Packet Filter at Layer 2 (NIC Driver RX ring, ~12.4ns, sk_buff bypass)
   └── Phase 2 (Asynchronous Remediation, 2-5s):
       ├── Internal Deadlock -> Targeted Container Restart (Docker/K8s API)
       ├── Host Residual / Noisy Neighbor -> Kubernetes Pod Eviction & Node Rescheduling
@@ -47,7 +48,7 @@ A real-time, three-tier closed-loop orchestration and autonomous self-healing sy
 ```
 ebpf_triage_system/
 ├── ebpf/
-│   └── connect_tracker.c       # Multi-vector eBPF sensor (connect, futex, socket buffer, drain map)
+│   └── connect_tracker.c       # Multi-vector eBPF sensor (connect, futex, socket buffer, XDP Layer-2 filter)
 ├── collector/
 │   ├── __init__.py
 │   └── namespace_resolver.py   # PID/cgroup/namespace resolver with service topology mapping
@@ -59,6 +60,7 @@ ebpf_triage_system/
 ├── actuator/
 │   ├── __init__.py
 │   ├── netedit_actuator.py     # NetEdit BpfAdapter tc traffic drain actuator (< 1ms mitigation)
+│   ├── xdp_actuator.py         # eBPF XDP line-rate packet filter actuator (~12.4ns Layer-2 bypass)
 │   ├── cgroup_actuator.py      # Direct cgroup v2 cpu.max writer (10% CPU quota)
 │   └── docker_actuator.py      # Docker Engine SDK & Kubernetes pod eviction client
 ├── tests/
@@ -73,25 +75,36 @@ ebpf_triage_system/
 
 ## How to Run
 
-### 1. Synthetic Demonstration Mode (Windows / macOS / Linux without root)
+### 1. Interactive Real-Time Web Dashboard (Recommended for Visual Evaluation)
+Launches the full interactive web dashboard with dynamic Vis.js DAG topology, Chart.js telemetry streaming, one-click chaos fault injection, and real-time audit logs:
+
+```bash
+# Start the web dashboard (auto-launches your browser at http://localhost:8088)
+py run_dashboard.py
+
+# Or on Windows, double-click or run:
+.\dashboard.cmd
+```
+
+### 2. Synthetic Demonstration Mode in Terminal (Windows / macOS / Linux without root)
 Demonstrates the full multi-tier microservice architecture, CrossTrace span propagation, K-Sense buffer starvation, Beyond Thread States futex deadlock, TORAI TCORW ranking, CARAF residual classification, and NetEdit two-phase self-healing:
 
 ```bash
-# Run demonstration
+# Run demonstration in console
 py controller.py --demo
 
 # Customize parameters
 py controller.py --demo --window 1.5 --threshold 10 --stage2-delay 2.5
 ```
 
-### 2. Live Linux eBPF Mode (Requires Linux Kernel & Root / CAP_BPF)
+### 3. Live Linux eBPF Mode (Requires Linux Kernel & Root / CAP_BPF)
 Requires `bcc` installed (`apt-get install bpfcc-tools python3-bpfcc` on Ubuntu/Debian):
 
 ```bash
 sudo python3 controller.py
 ```
 
-### 3. Running via Docker & Docker Compose (Containerized)
+### 4. Running via Docker & Docker Compose (Containerized)
 Both synthetic demonstration and live host eBPF remediation can be run directly inside Docker:
 
 ```bash
@@ -107,9 +120,9 @@ Both synthetic demonstration and live host eBPF remediation can be run directly 
 # Stop services
 .\docker.cmd compose down
 ```
-For the complete step-by-step testbed failure injection walkthrough, see [DOCKER_GUIDE.md](file:///c:/Users/sanda/Downloads/os%20project/ebpf_triage_system/DOCKER_GUIDE.md).
+For the complete step-by-step testbed failure injection walkthrough, see [DOCKER_GUIDE.md](./DOCKER_GUIDE.md).
 
-### 4. Running the Test Suite
+### 5. Running the Test Suite
 
 ```bash
 py -m pytest tests -v

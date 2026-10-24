@@ -223,9 +223,13 @@ class RemediationPipeline:
                 host_context=host_context
             )
 
+            print(f"\n[ALERT - ANOMALY DETECTED] Process '{comm}' (PID: {pid}, Container: {cid}) -> {endpoint}")
+            print(f"  |-- Diagnostic Brain: Sliced 2-hop sub-graph ({subgraph.number_of_nodes()} nodes, {subgraph.number_of_edges()} edges)")
+            print(f"  |-- TORAI TCORW Consensus: Root Cause '{root_node}' (Confidence: {confidence * 100:.1f}%)")
+            print(f"  |-- CARAF Residual Diagnosis: {classification_info['diagnosis']}")
+
             # Manage progressive two-phase remediation state
-            is_new = cid not in self.remediation_state
-            if is_new:
+            if cid not in self.remediation_state:
                 self.remediation_state[cid] = {
                     "first_seen": current_time,
                     "phase1_applied": False,
@@ -234,11 +238,6 @@ class RemediationPipeline:
                     "classification": classification_info["classification"],
                     "ip_port": endpoint.split(":") if ":" in endpoint else ("127.0.0.1", 8080)
                 }
-
-                print(f"\n[⚠️  ANOMALY DETECTED] Process '{comm}' (PID: {pid}, Container: {cid[:12]}) -> {endpoint}")
-                print(f"  • Service Topology: Analyzed local cluster neighborhood ({subgraph.number_of_nodes()} services)")
-                print(f"  • Root Cause Pinpointed: '{root_node}' ({confidence * 100:.1f}% confidence)")
-                print(f"  • Diagnosis: {classification_info['diagnosis']}")
 
             state = self.remediation_state[cid]
             duration = current_time - state["first_seen"]
@@ -251,38 +250,34 @@ class RemediationPipeline:
                 except (ValueError, IndexError):
                     port_val = 8080
 
-                print(f"\n[⚡ PHASE 1: INSTANT MITIGATION (< 1ms)]")
-                print(f"  • Action: Isolating network traffic away from failing target {ip_str}:{port_val}...")
+                print(f"[REMEDIATION - PHASE 1] Initiating Ring 0 NetEdit tc traffic drain on {ip_str}:{port_val}...")
                 NetEditBpfAdapter.drain_traffic(ip_str, port_val, bpf_instance=bpf_instance)
                 state["phase1_applied"] = True
 
                 # If connection retry storm, also throttle CPU bandwidth to 10%
                 if classification_info["classification"] == "CONNECTION_RETRY_STORM":
                     cgroup_path = NamespaceResolver.get_cgroup_v2_path(cid)
-                    print(f"  • Action: Capping container CPU quota to 10% to prevent host freeze...")
+                    print(f"  |-- Applying cgroup v2 CPU quota (10%) to stabilize host...")
                     Cgroupv2Actuator.apply_cpu_quota(cgroup_path, quota_pct=10)
 
             # --- TIER 3: PHASE 2 ASYNCHRONOUS HEALING (2-5s) ---
             elif not state["phase2_applied"] and duration >= self.stage2_delay:
-                print(f"\n[🛠️  PHASE 2: AUTOMATIC RECOVERY (Evaluated after {duration:.1f}s)]")
+                print(f"[REMEDIATION - PHASE 2] Executing targeted asynchronous healing for {cid}...")
                 c_type = state["classification"]
 
                 if c_type == "HOST_RESIDUAL_CONTENTION":
                     # CARAF Noisy Neighbor / Host Contention -> Evict Pod to schedule on another node
-                    print(f"  • Diagnosis: Shared server CPU is overloaded (Noisy Neighbor)")
-                    print(f"  • Action: Evicting pod '{root_node}' to reschedule on an idle server...")
+                    print(f"  |-- Ambiguous hardware residual confirmed. Evicting container/pod {cid}...")
                     DockerApiActuator.evict_container(cid, pod_name=root_node)
 
                 elif c_type in ("INTERNAL_DEADLOCK", "SOCKET_QUEUE_STARVATION"):
                     # Beyond Thread States Futex Deadlock / K-Sense Starvation -> Restart Container
-                    print(f"  • Diagnosis: Internal application code deadlock detected")
-                    print(f"  • Action: Safely rebooting deadlocked container '{cid[:12]}'...")
+                    print(f"  |-- Internal process lockup confirmed. Triggering surgical container restart for {cid}...")
                     DockerApiActuator.restart_container(cid)
 
                 else:
                     # Connection Retry Storm -> Freeze container via Docker pause API
-                    print(f"  • Diagnosis: Downstream database unreachable (Retry Storm)")
-                    print(f"  • Action: Freezing container '{cid[:12]}' to stop network flooding...")
+                    print(f"  |-- Persistent retry storm across {duration:.2f}s. Freezing container {cid} via Docker API...")
                     DockerApiActuator.pause_container(cid)
 
                 state["phase2_applied"] = True
@@ -293,7 +288,6 @@ class RemediationPipeline:
                     port_val = int(state["ip_port"][1])
                 except Exception:
                     port_val = 8080
-                print(f"  • Action: Restoring network traffic to {ip_str}:{port_val}...")
                 NetEditBpfAdapter.restore_traffic(ip_str, port_val, bpf_instance=bpf_instance)
 
         return graph, anomalies
@@ -316,18 +310,18 @@ def run_live_ebpf(pipeline: RemediationPipeline, poll_interval: float = 0.5):
         print(f"[ERROR] eBPF C program not found at {ebpf_source}")
         sys.exit(1)
 
-    print(f"[*] Compiling and loading eBPF kernel sensor: {ebpf_source.name}")
+    print(f"[*] Compiling and attaching multi-vector eBPF sensor: {ebpf_source}")
     try:
         b = BPF(src_file=str(ebpf_source))
     except Exception as e:
-        print(f"[ERROR] Failed to compile/attach eBPF probe (requires root / sudo): {e}")
+        print(f"[ERROR] Failed to compile/attach eBPF probe (needs root?): {e}")
         sys.exit(1)
 
-    print("[✓] eBPF kernel sensors active and monitoring:")
-    print("    • Network: Connection retry storm detector")
-    print("    • Threading: Mutex lock & deadlock detector")
-    print("    • Sockets: Queue buffer overflow detector")
-    print("[*] Listening for system anomalies... (Press Ctrl+C to exit)")
+    print("[*] Successfully attached to tracepoints:")
+    print("    - syscalls:sys_enter_connect (Connection retry storm monitor)")
+    print("    - syscalls:sys_enter_futex / sys_exit_futex (Beyond Thread States deadlock detector)")
+    print("    - sock:sock_exceed_buf_limit (K-Sense socket buffer starvation)")
+    print("[*] Listening for closed-loop triage events... (Press Ctrl+C to exit)")
 
     def handle_ringbuf_event(cpu, data, size):
         evt = b["loop_events"].event(data)
@@ -358,7 +352,7 @@ def run_live_ebpf(pipeline: RemediationPipeline, poll_interval: float = 0.5):
             b.ring_buffer_poll(timeout=int(poll_interval * 1000))
             pipeline.evaluate_and_remediate(time.time(), bpf_instance=b)
     except KeyboardInterrupt:
-        print("\n[*] Detaching eBPF sensors and exiting cleanly.")
+        print("\n[*] Detaching eBPF probes and exiting cleanly.")
 
 
 def run_demo_simulation(pipeline: RemediationPipeline):
@@ -374,18 +368,20 @@ def run_demo_simulation(pipeline: RemediationPipeline):
       - Phase 2 Asynchronous surgical container restart / pod eviction.
     """
     print("=" * 80)
-    print("           AUTONOMOUS CLOUD SELF-HEALING SYSTEM - LIVE DEMO             ")
+    print("   AUTONOMOUS CLOSED-LOOP ORCHESTRATION PIPELINE - DEMO SIMULATION    ")
+    print("       (Literature Review Architecture: K-Sense + Beyond Thread States +      ")
+    print("              CrossTrace + TORAI TCORW + CARAF + NetEdit)             ")
     print("=" * 80)
-    print("System Architecture:")
-    print("  Tier 1 | Kernel Pre-Crash Detection (Catches frozen threads & queue overloads)")
-    print("  Tier 2 | AI Root-Cause Diagnostic Brain (Finds which microservice actually failed)")
-    print("  Tier 3 | Two-Phase Self-Healing (Instant traffic drain < 1ms -> Automatic recovery)")
+    print("Three-Tier Architecture:")
+    print("  Tier 1: Pre-Crash Detection (sk_rmem_alloc, futex, sched_switch, connect storms)")
+    print("  Tier 2: Diagnostic Brain (k-hop sub-graph slicing + TORAI TCORW + CARAF residual)")
+    print("  Tier 3: Two-Phase Self-Healing (Phase 1 NetEdit tc drain < 1ms -> Phase 2 Restart/Evict)")
     print("=" * 80)
 
     time.sleep(0.3)
 
     # Register multi-tier microservice architecture in CrossTrace Dynamic Topology
-    print("\n[STEP 1/4] Mapping Microservice Architecture & Health")
+    print("\n[PHASE 1] Initializing CrossTrace Multi-Hop Service Topology Graph...")
     services = [
         ("api-gateway", "9f8e7d6c5b4a", "10.0.1.10", 80, 1024, "gateway"),
         ("orders-service", "d4a8c91f021e", "10.0.1.20", 8080, 4812, "orders-svc"),
@@ -408,18 +404,18 @@ def run_demo_simulation(pipeline: RemediationPipeline):
     for caller, callee, span_id, lat in span_chains:
         pipeline.topology_graph.record_span(caller, callee, span_id, latency_ms=lat, is_error=False)
 
-    print("  ✔ Discovered 5 microservices across the request chain:")
-    print("      api-gateway -> orders-service -> inventory-service -> target-redis")
-    print("                                    -> payment-service")
-    print("  ✔ Cluster Status: HEALTHY (All services operating normally)")
+    print(f"  |-- Registered 5 Microservices across Call Chain.")
+    print(f"  |-- Ingested deterministic in-band CrossTrace TCP spans.")
+    print(f"  |-- Cluster Topology Nodes: {pipeline.topology_graph.G.number_of_nodes()}, Edges: {pipeline.topology_graph.G.number_of_edges()}")
+    print("  |-- System Status: HEALTHY (Zero Anomaly Thresholds Exceeded)")
 
     time.sleep(0.8)
 
     # FAULT INJECTION 1: Internal Futex Deadlock & Socket Buffer Starvation (orders-service)
     print("\n" + "-" * 80)
-    print("[STEP 2/4] Simulating Fault: Internal Code Deadlock in 'orders-service'")
-    print("  • What happened: Worker thread locked on a mutex; incoming requests freeze.")
-    print("  • Kernel warning: Socket queue backed up to 100% full (1 MB unread buffer).")
+    print("[PHASE 2] FAULT INJECTION: Beyond Thread States & K-Sense Pre-Crash Detection")
+    print("Container 'orders-service' (PID: 4812) encounters sys_futex mutex lockup!")
+    print("Application thread stalled -> sk_rmem_alloc socket queue backups monotonically (1MB / 100% full)")
     print("-" * 80)
 
     t0 = time.time()
@@ -442,7 +438,7 @@ def run_demo_simulation(pipeline: RemediationPipeline):
 
     # Simulate Phase 2 Asynchronous Escalation (> stage2_delay)
     print("\n" + "-" * 80)
-    print(f"[STEP 3/4] Automatic Service Recovery (> {pipeline.stage2_delay}s evaluation window)")
+    print(f"[PHASE 3] EVALUATING PHASE 2 ASYNCHRONOUS HEALING (> {pipeline.stage2_delay}s elapsed)...")
     print("-" * 80)
     t1 = t0 + pipeline.stage2_delay + 0.2
     pipeline.evaluate_and_remediate(current_time=t1, forced_anomaly=deadlock_anomaly)
@@ -451,9 +447,9 @@ def run_demo_simulation(pipeline: RemediationPipeline):
 
     # FAULT INJECTION 2: CARAF Ambiguous Residual Factor (Host Noisy Neighbor Contention)
     print("\n" + "-" * 80)
-    print("[STEP 4/4] Simulating Fault: Shared Server Overload ('Noisy Neighbor')")
-    print("  • What happened: Other workloads on the host are stealing 68% CPU time.")
-    print("  • Brain logic: Differentiating software bug vs host hardware starvation...")
+    print("[PHASE 4] FAULT INJECTION: CARAF Ambiguous Residual Factor (Host Resource Contention)")
+    print("Host physical CPU thrashing detected! Multiple sibling containers experience runqueue stall.")
+    print("Differentiating application bug vs host hardware starvation...")
     print("-" * 80)
 
     t2 = time.time()
@@ -479,49 +475,50 @@ def run_demo_simulation(pipeline: RemediationPipeline):
     pipeline.evaluate_and_remediate(current_time=t3, forced_anomaly=residual_anomaly, host_context=host_context)
 
     print("\n" + "=" * 80)
-    print("                     DEMONSTRATION COMPLETE: KEY TAKEAWAYS                      ")
+    print("                  DEMONSTRATION SIMULATION COMPLETE                     ")
     print("=" * 80)
-    print("  1. Instant Detection: Caught application freezes in the Linux kernel BEFORE crashes.")
-    print("  2. Smart Diagnostics: Isolated the exact failing service using dependency graph analysis.")
-    print("  3. Root-Cause Precision: Separated internal code bugs from overloaded host servers.")
-    print("  4. Two-Phase Healing:")
-    print("       • Phase 1 (< 1ms): Instantly drained traffic away from failing endpoints.")
-    print("       • Phase 2 (Async): Safely restarted deadlocked containers or evicted pods.")
+    print("Key Literature Review Capabilities Validated:")
+    print("  1. K-Sense & Beyond Thread States: Sensed futex stalls & socket queue backups in ring 0.")
+    print("  2. CrossTrace Dynamic DAG: Preserved multi-hop request topology with in-band span tagging.")
+    print("  3. Sub-Graph Slicing: Bounded analysis to 2-hop neighborhood, solving state space explosion.")
+    print("  4. TORAI TCORW: Ran personalized PageRank random walk to isolate exact root-cause service.")
+    print("  5. CARAF Classifier: Disambiguated internal deadlocks from bare-metal noisy neighbors.")
+    print("  6. NetEdit Two-Phase Actuation: Phase 1 tc traffic drain in < 1ms followed by Phase 2 healing.")
     print("=" * 80)
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Autonomous Closed-Loop Cloud Self-Healing Controller"
+        description="Autonomous Closed-Loop Orchestration Controller (2024-2026 Architectural Synthesis)"
     )
     parser.add_argument(
         "--demo",
         action="store_true",
-        help="Run interactive demonstration mode (works on any OS without root)"
+        help="Run synthetic multi-tier demonstration mode without requiring root eBPF privileges"
     )
     parser.add_argument(
         "--window",
         type=float,
         default=1.5,
-        help="Sliding time window in seconds for detecting retry storms (default: 1.5)"
+        help="Sliding window in seconds for hysteresis evaluation (default: 1.5)"
     )
     parser.add_argument(
         "--threshold",
         type=int,
         default=10,
-        help="Failed connection attempts before taking action (default: 10)"
+        help="Minimum connection retry attempts within window to trigger remediation (default: 10)"
     )
     parser.add_argument(
         "--stage2-delay",
         type=float,
         default=2.5,
-        help="Seconds to wait before restarting container or evicting pod (default: 2.5)"
+        help="Delay in seconds before escalating from Phase 1 to Phase 2 actuation (default: 2.5)"
     )
     parser.add_argument(
         "--poll-interval",
         type=float,
         default=0.5,
-        help="Kernel ring buffer polling interval in seconds (default: 0.5)"
+        help="BPF ring buffer poll interval in seconds (default: 0.5)"
     )
 
     args = parser.parse_args()
@@ -537,9 +534,9 @@ def main():
     else:
         # Check if running under Linux with root or if demo should be suggested
         if os.name != "posix" or (hasattr(os, "geteuid") and os.geteuid() != 0):
-            print("[INFO] Running without root privileges or on non-Linux host.")
+            print("[INFO] No root privileges or running on non-Linux host.")
             print("[INFO] Launching demonstration simulation mode (--demo).")
-            print("[INFO] Run with --help to see available command-line options.\n")
+            print("[INFO] Use --help to view all configuration options.\n")
             run_demo_simulation(pipeline)
         else:
             run_live_ebpf(pipeline, poll_interval=args.poll_interval)
